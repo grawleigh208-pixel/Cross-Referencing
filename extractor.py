@@ -11,12 +11,14 @@ def setup_database(db_path="parts_catalog.db"):
     cursor.execute("DROP TABLE IF EXISTS parts")
     cursor.execute("DROP TABLE IF EXISTS cross_references")
     
+    # Updated schema to match "Updated Cross Referencing Database (1).xlsx"
     cursor.execute("""
     CREATE TABLE parts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        part_number TEXT UNIQUE,
-        manufacturer TEXT,
+        part_number_oe TEXT UNIQUE,
+        supplier_name_oe TEXT,
         description TEXT,
+        product_application TEXT,
         raw_specifications TEXT
     )
     """)
@@ -38,7 +40,8 @@ def extract_competitor_mfr(line):
         "NAVISTAR", "VOLVO", "MACK", "FREIGHTLINER", "CATERPILLAR", "CAT",
         "CUMMINS", "DETROIT DIESEL", "ROCKWELL", "ABEX", "GUNITE", 
         "MIDLAND", "STEMCO", "AUTOMANN", "EUCLID", "PETERBILT", 
-        "KENWORTH", "FORD", "GM", "CHEVROLET", "ISUZU", "HINO"
+        "KENWORTH", "FORD", "GM", "CHEVROLET", "ISUZU", "HINO",
+        "AMERICAN CHROME", "VLVNA"
     ]
     
     upper_line = line.upper()
@@ -53,7 +56,6 @@ def extract_competitor_mfr(line):
     return "UNKNOWN OEM"
 
 def clean_description(line, matched_pns, manufacturer):
-    """Strips part numbers and brand names out of the line to leave only the description."""
     desc = line
     for pn in matched_pns:
         desc = desc.replace(pn, "")
@@ -73,7 +75,7 @@ def clean_description(line, matched_pns, manufacturer):
 def get_primary_supplier(file_path):
     base_name = os.path.basename(file_path)
     name = os.path.splitext(base_name)[0]
-    name = re.sub(r'(?i)\b(catalog|specs|guide|pdf|xlsx|csv)\b', '', name).strip()
+    name = re.sub(r'(?i)\b(catalog|specs|guide|pdf|xlsx|csv|database)\b', '', name).strip()
     return name if name else "Unknown Supplier"
 
 def process_single_pdf(pdf_path, cursor, pn_pattern, stop_words):
@@ -115,12 +117,13 @@ def process_line(line, primary_supplier, cursor, pn_pattern, stop_words):
         comp_mfr_name = extract_competitor_mfr(line)
         desc_text = clean_description(line, matches, comp_mfr_name)
         
+        # Product Application is left blank initially for PDF parsing unless explicitly modeled later
         cursor.execute("""
-            INSERT OR IGNORE INTO parts (part_number, manufacturer, description, raw_specifications)
-            VALUES (?, ?, ?, ?)
-        """, (primary_pn, primary_supplier, desc_text, line.strip()))
+            INSERT OR IGNORE INTO parts (part_number_oe, supplier_name_oe, description, product_application, raw_specifications)
+            VALUES (?, ?, ?, ?, ?)
+        """, (primary_pn, primary_supplier, desc_text, "", line.strip()))
         
-        cursor.execute("SELECT id FROM parts WHERE part_number = ?", (primary_pn,))
+        cursor.execute("SELECT id FROM parts WHERE part_number_oe = ?", (primary_pn,))
         part_row = cursor.fetchone()
         
         if part_row:
@@ -144,10 +147,10 @@ def main():
         all_files.extend(glob.glob(os.path.join("catalogs", ext)))
     
     if not all_files:
-        print("No valid files found in the 'catalogs' folder. Please add files and try again.")
+        print("No valid files found in the 'catalogs' folder.")
         return
 
-    print("Extracting true descriptions and OEMs...")
+    print("Rebuilding database with the updated OE format...")
     for file_path in all_files:
         if file_path.lower().endswith('.pdf'):
             process_single_pdf(file_path, cursor, pn_pattern, stop_words)
@@ -156,7 +159,7 @@ def main():
 
     conn.commit()
     conn.close()
-    print("Database built successfully. Refresh your search app.")
+    print("Database built successfully.")
 
 if __name__ == "__main__":
     main()
